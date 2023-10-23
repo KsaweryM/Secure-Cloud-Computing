@@ -3,37 +3,8 @@ import mcl
 
 from mcl import G1
 
-def read_file(path, chunk_size):
-    divided_file = []
-    nr_chunks = 0
-    with open(path, 'rb') as file:
-        while True:
-            byte = file.read(chunk_size)
-            if not byte:
-                break
-            nr_chunks += 1
-            divided_file.append(int.from_bytes(byte, "big"))
-    return divided_file, hash(path.encode("utf-8")), nr_chunks
-
-def PRNG(secret_key, file_ID, index):
-    random.seed(hash(secret_key.getStr()) + hash(file_ID) + hash(index))
-    random_value = mcl.Fr()
-    random_value.setInt(random.randint(0, 2**32))
-    return random_value
-
-def create_polynomial(secret_key, file_ID, nr_chunks):
-    polynomial = []
-    for i in range(0, nr_chunks + 1):
-        polynomial.append(PRNG(secret_key, file_ID, i))
-    return polynomial
-
-def print_polynomial(polynomial):
-    for i, coefficient in enumerate(polynomial):
-        print(f"a_{i} = {coefficient.getStr()}")
-
-def print_tagged_file(tagged_file):
-    for i, (m, t) in enumerate(tagged_file):
-        print(f"m_{i} = {m.getStr()}, t = {t.getStr()}")
+mcl_zero = mcl.Fr()
+mcl_zero.setInt(0)
 
 def execute_polynomial(polynomial, argument):
     value = mcl.Fr()
@@ -42,14 +13,6 @@ def execute_polynomial(polynomial, argument):
         value = value + coefficient
     return value
 
-def tag_file(file, polynomial):
-    tagged_file = []
-    for i in range(len(file)):
-        fr_file = mcl.Fr()
-        fr_file.setInt(file[i])
-        tagged_file.append((fr_file, execute_polynomial(polynomial, fr_file)))
-    return tagged_file
-
 def lagrange_interpolation(tagged_file, x):
     interpolation = mcl.G1()
     for point_1 in tagged_file:
@@ -57,47 +20,91 @@ def lagrange_interpolation(tagged_file, x):
         multi = mcl.Fr()
         multi.setInt(1)
         for point_2 in tagged_file:
-                x_j, y_j = point_2
+                x_j, _ = point_2
                 if x_i != x_j:
                     multi *= (x - x_j) / (x_i - x_j)
         multi = y_i * multi
         interpolation += multi
     return interpolation
 
-chunk_size = 2
-file, file_ID, nr_chunks = read_file("text.txt", chunk_size)
-secret_key = mcl.Fr()
-secret_key.setByCSPRNG()
+class Client:
+    PF = None
 
-G = G1.hashAndMapTo(b"genQ")
-PUBLIC_KEY = G * secret_key
+    def read_file(self, path, chunk_size):
+        divided_file = []
+        nr_chunks = 0
+        with open(path, 'rb') as file:
+            while True:
+                byte = file.read(chunk_size)
+                if not byte:
+                    break
+                nr_chunks += 1
+                divided_file.append(int.from_bytes(byte, "big"))
+        return divided_file, hash(path.encode("utf-8")), nr_chunks
 
-poly = create_polynomial(secret_key, file_ID, nr_chunks)
-tagged_file = tag_file(file, poly)
+    def PRNG(self, secret_key, file_ID, index):
+        random.seed(hash(secret_key.getStr()) + hash(file_ID) + hash(index))
+        random_value = mcl.Fr()
+        random_value.setInt(random.randint(0, 2**32))
+        return random_value
 
-x_c = mcl.Fr()
-x_c.setByCSPRNG()
+    def create_polynomial(self, secret_key, file_ID, nr_chunks):
+        polynomial = []
+        for i in range(0, nr_chunks + 1):
+            polynomial.append(self.PRNG(secret_key, file_ID, i))
+        return polynomial
 
-mcl_zero = mcl.Fr()
-mcl_zero.setInt(0)
+    def print_polynomial(self, polynomial):
+        for i, coefficient in enumerate(polynomial):
+            print(f"a_{i} = {coefficient.getStr()}")
 
-H = (PUBLIC_KEY, x_c, PUBLIC_KEY * (execute_polynomial(poly, mcl_zero)))
+    def print_tagged_file(self, tagged_file):
+        for i, (m, t) in enumerate(tagged_file):
+            print(f"m_{i} = {m.getStr()}, t = {t.getStr()}")
 
-PF = PUBLIC_KEY * execute_polynomial(poly, x_c)
-# client end
+    def tag_file(self, file, polynomial):
+        tagged_file = []
+        for i in range(len(file)):
+            fr_file = mcl.Fr()
+            fr_file.setInt(file[i])
+            tagged_file.append((fr_file, execute_polynomial(polynomial, fr_file)))
+        return tagged_file
 
-#server
-psi = []
-psi.append((mcl_zero, H[2]))
+    def create_challenge(self, file_name):
+        chunk_size = 2
+        file, file_ID, nr_chunks = self.read_file(file_name, chunk_size)
+        secret_key = mcl.Fr()
+        secret_key.setByCSPRNG()
+        G = G1.hashAndMapTo(b"genQ")
+        PUBLIC_KEY = G * secret_key
+        poly = self.create_polynomial(secret_key, file_ID, nr_chunks)
+        tagged_file = self.tag_file(file, poly)
+        x_c = mcl.Fr()
+        x_c.setByCSPRNG()
+        H = (PUBLIC_KEY, x_c, PUBLIC_KEY * (execute_polynomial(poly, mcl_zero)))
+        PF = PUBLIC_KEY * execute_polynomial(poly, x_c)
+        self.PF = PF
+        return H, tagged_file
 
-for (m, t) in tagged_file:
-    psi.append((m, PUBLIC_KEY * t))
+    def verify_proof(self, PROOF):
+        return self.PF == PROOF
 
-RESPONSE = lagrange_interpolation(psi, x_c)
-print(PF.getStr())
-print(RESPONSE.getStr())
-#server end
+class Server:
+    def create_proof(self, tagged_file, H):
+        PUBLIC_KEY = H[0]
+        x_c = H[1]
+        value = H[2]
+        psi = []
+        psi.append((mcl_zero, value))
+        for (m, t) in tagged_file:
+            psi.append((m, PUBLIC_KEY * t))
+        PROOF = lagrange_interpolation(psi, x_c)
+        return PROOF
 
-#client
-print(PF == RESPONSE)
-#client end
+client = Client()
+H, tagged_file = client.create_challenge("text.txt")
+
+server = Server()
+PROOF = server.create_proof(tagged_file, H)
+
+print(client.verify_proof(PROOF))
