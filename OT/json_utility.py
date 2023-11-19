@@ -27,7 +27,7 @@ def deserialize_rand(data):
         res.append(rand_)
     return res
 
-def deserialize_w(data: str):
+def deserialize_G1(data: str):
     g = G1()
     g.setStr(bytes(data, 'latin-1'))
     return g

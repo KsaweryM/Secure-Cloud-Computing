@@ -36,7 +36,7 @@ class Server:
     def __init__(self, seed):
         self.__GENERATOR = G1.hashAndMapTo(seed)
 
-    def one_of_two_init(self, blocks):
+    def one_of_two_n(self, blocks):
         self.__blocks = blocks
         self.__rs     = None
         self.__Rs     = None
@@ -67,9 +67,6 @@ def path_to_file(directory, file_name):
     return os.path.join(os.getcwd(), directory, file_name)
 
 if __name__ == "__main__":
-    current_directory = os.getcwd()
-    file_path = os.path.join(current_directory, "data", "xd.txt")
-
     if (len(sys.argv) != 2):
         raise ValueError("Invalid number of args.")
 
@@ -88,7 +85,7 @@ if __name__ == "__main__":
         raise ValueError("Invalid argument.")
 
     if server:
-        server.one_of_two_init(blocks)
+        server.one_of_two_n(blocks)
         Rs = server.get_Rs()
         save_to_json(path_to_file("data", "rand.json"), Rs)
         print("\"rand.json\" has been added.")
@@ -104,7 +101,7 @@ if __name__ == "__main__":
     if server:
         input("add \"w.json\".")
         serialized_omega = load_from_json(path_to_file("data", "w.json"))
-        deserialized_omega = deserialize_w(serialized_omega)
+        deserialized_omega = deserialize_G1(serialized_omega)
         server.create_keys(deserialized_omega)
         encrypted_blocks = server.get_encrypted_blocks()
         save_to_json(path_to_file("data", "ciphertexts.json"), encrypted_blocks)
