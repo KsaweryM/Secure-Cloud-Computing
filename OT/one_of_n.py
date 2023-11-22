@@ -76,7 +76,7 @@ if __name__ == "__main__":
     port = int(sys.argv[3])
 
     seed = b'seed'
-    blocks = ['Hello ', 'there!', 'General ', 'Kenobi!']
+    blocks = [b'Hello ', b'there!', b'General ', b'Kenobi!']
     index = 1
 
     if (sys.argv[1] == "server"):

@@ -106,7 +106,7 @@ if __name__ == "__main__":
     port = int(sys.argv[3])
 
     seed = b'seed'
-    client_index = 1
+    client_index = 0
     first_message = b'Hello'
     second_message =  b'There'
 
