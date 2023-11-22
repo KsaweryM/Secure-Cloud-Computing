@@ -1,116 +1,103 @@
-from json_utility import *
+from utilities import *
 from mcl import Fr, G1
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad, unpad
 import sys
-import os
 
-class Client:
+class Client_1_of_N:
     __GENERATOR = None
     __alfa  = None
     __index = None
 
-    def __init__(self, seed):
+    def __init__(self, seed: bytes):
         self.__GENERATOR = G1.hashAndMapTo(seed)
 
-    def choose_omega(self, index : int, Rs : list[G1]) -> G1:
+    def __choose_omega(self, index : int, Rs : list[G1]) -> G1:
         self.__index = index
         self.__alfa  = Fr.rnd()
 
         return Rs[self.__index] * self.__alfa
 
-    def decode(self, encrypted_blocks: list[tuple[bytes | bytearray | memoryview, bytes]]) -> str:
-        iv, ciphertext = encrypted_blocks[self.__index]
-        cipher = AES.new(((self.__GENERATOR * self.__alfa).getStr())[:16], AES.MODE_CBC, iv)
-        pt = unpad(cipher.decrypt(ciphertext), AES.block_size)
+    def __decode(self, encrypted_blocks) -> str:
+        return decrypt_message(encrypted_blocks[self.__index], hash_G1_to_bytes(self.__GENERATOR * self.__alfa))
 
-        return pt.decode()
+    def execute_protocol(self, index: int, TCP_socket: socket) -> any:
+        Rs = receive(TCP_socket)
+        omega = self.__choose_omega(index, Rs)
+        send(TCP_socket, omega)
+        encrypted_blocks = receive(TCP_socket)
+        decoded_block = self.__decode(encrypted_blocks)
 
-class Server:
+        return pickle.loads(decoded_block)
+
+
+class Server_1_of_N:
     __GENERATOR = None
     __blocks    = None
     __rs        = None
     __Rs        = None
     __keys      = None
 
-    def __init__(self, seed):
+    def __init__(self, seed: bytes):
         self.__GENERATOR = G1.hashAndMapTo(seed)
 
-    def one_of_two_n(self, blocks):
-        self.__blocks = blocks
-        self.__rs     = None
-        self.__Rs     = None
-        self.__keys   = None
-
-    def get_Rs(self) -> list[G1]:
+    def __get_Rs(self) -> list[G1]:
         self.__rs = [Fr.rnd() for _ in self.__blocks]
         self.__Rs = [self.__GENERATOR * r for r in self.__rs]
 
         return self.__Rs
 
-    def create_keys(self, omega: G1) -> list[bytes]:
+    def __create_keys(self, omega: G1) -> list[bytes]:
         one = Fr.setHashOf(b'1') / Fr.setHashOf(b'1')
-        self.__keys = [(omega * (one / r)).getStr()[:16] for r in self.__rs]
+        self.__keys = [hash_G1_to_bytes(omega * (one / r)) for r in self.__rs]
 
-    def get_encrypted_blocks(self) -> list[tuple[bytes | bytearray | memoryview, bytes]]:
+    def __get_encrypted_blocks(self):
         assert(self.__keys)
 
         encrypted_blocks = []
         for key, message in zip(self.__keys, self.__blocks):
-            cipher = AES.new(key, AES.MODE_CBC)
+            encrypted_blocks.append(encrypt_message(message, key))
 
-            encrypted_block = cipher.encrypt(pad(message, AES.block_size))
-            encrypted_blocks.append((cipher.iv, encrypted_block))
         return encrypted_blocks
 
-def path_to_file(directory, file_name):
-    return os.path.join(os.getcwd(), directory, file_name)
+    def execute_protocol(self, blocks: list, TCP_socket: socket):
+        serialised_blocks = [pickle.dumps(block) for block in blocks]
+        self.__blocks = serialised_blocks
+        Rs = self.__get_Rs()
+        send(TCP_socket, Rs)
+        omega = receive(TCP_socket)
+        self.__create_keys(omega)
+        encrypted_blocks = self.__get_encrypted_blocks()
+        send(TCP_socket, encrypted_blocks)
 
 if __name__ == "__main__":
-    if (len(sys.argv) != 2):
+    if (len(sys.argv) != 4):
         raise ValueError("Invalid number of args.")
 
+    IP = sys.argv[2]
+    port = int(sys.argv[3])
+
     seed = b'seed'
-    blocks = [b'Hello ', b'there!', b'General ', b'Kenobi!']
+    blocks = ['Hello ', 'there!', 'General ', 'Kenobi!']
     index = 1
 
-    client = None
-    server = None
+    if (sys.argv[1] == "server"):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind((IP, port))
+            server_socket.listen()
+            client_socket, _ = server_socket.accept()
 
-    if (sys.argv[1] == "client"):
-        client = Client(seed)
-    elif (sys.argv[1] == "server"):
-        server = Server(seed)
+            server = Server_1_of_N(seed)
+            server.execute_protocol(blocks, client_socket)
+
+    elif (sys.argv[1] == "client"):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+            client_socket.connect((IP, port))
+            client = Client_1_of_N(seed)
+
+            output = client.execute_protocol(index, client_socket)
+            print(output)
+
+
+
     else:
         raise ValueError("Invalid argument.")
-
-    if server:
-        server.one_of_two_n(blocks)
-        Rs = server.get_Rs()
-        save_to_json(path_to_file("data", "rand.json"), Rs)
-        print("\"rand.json\" has been added.")
-
-    if client:
-        input("add \"rand.json\".")
-        serialized_rand = load_from_json(path_to_file("data", "rand.json"))
-        deserialized_rand = deserialize_rand(serialized_rand)
-        omega = client.choose_omega(index, deserialized_rand)
-        save_to_json(path_to_file("data", "w.json"), omega)
-        print("\"w.json\" has been added.")
-
-    if server:
-        input("add \"w.json\".")
-        serialized_omega = load_from_json(path_to_file("data", "w.json"))
-        deserialized_omega = deserialize_G1(serialized_omega)
-        server.create_keys(deserialized_omega)
-        encrypted_blocks = server.get_encrypted_blocks()
-        save_to_json(path_to_file("data", "ciphertexts.json"), encrypted_blocks)
-        print("\"ciphertexts.json\" has been added.")
-
-    if client:
-        input("add \"ciphertexts.json\".")
-        serialized_encrypted_blocks = load_from_json(path_to_file("data", "ciphertexts.json"))
-        deserialized_encrypted_blocks = deserialize_ciphertexts(serialized_encrypted_blocks)
-        decoded_block = client.decode(deserialized_encrypted_blocks)
-
-        print(decoded_block)

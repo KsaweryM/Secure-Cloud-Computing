@@ -2,7 +2,7 @@ import sys
 from one_of_two import Client_1_Of_2, Server_1_Of_2
 import random
 import os
-from json_utility import *
+from utilities import *
 
 def pseudo_random(key: bytes, nr_bytes: int):
     random.seed(key)
@@ -119,7 +119,7 @@ if __name__ == "__main__":
         if (server):
             input("Server: \"B\" file is required. Click enter to process this file.")
             B = deserialize_G1(load_from_json(path_to_B))
-            encryption1, encryption2 = server_1_Of_2.send_encryptions(B)
+            encryption1, encryption2 = server_1_Of_2.get_encryptions(B)
             save_to_json(path_to_encryptions, (encryption1, encryption2))
 
             print("Server: Server generated \"encrypted message\".")
